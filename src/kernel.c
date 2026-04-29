@@ -64,10 +64,129 @@ void reboot(void) {
 static void print_help(void) {
     console_writeln("  help");
     console_writeln("  clear");
-    console_writeln("  echo");
+    console_writeln("  echo <text>");
+    console_writeln("  date");
+    console_writeln("  calc <expr>    e.g. calc 3 + 4 * 2");
     console_writeln("  reboot");
     console_writeln("  halt");
-    console_writeln("  Turtle talk");
+    console_writeln("  Turtle talk <message>");
+}
+
+static void print_uint2(unsigned int n) {
+    console_putc((char)('0' + (n / 10) % 10));
+    console_putc((char)('0' + n % 10));
+}
+
+static void print_uint(unsigned int n) {
+    char buf[12];
+    int len = 0;
+    if (n == 0) { console_putc('0'); return; }
+    while (n > 0) { buf[len++] = (char)('0' + n % 10); n /= 10; }
+    for (int i = len - 1; i >= 0; i--) console_putc(buf[i]);
+}
+
+static void print_int(int n) {
+    if (n < 0) { console_putc('-'); print_uint((unsigned int)-n); }
+    else print_uint((unsigned int)n);
+}
+
+static uint8_t cmos_read(uint8_t reg) {
+    outb(0x70, reg);
+    io_wait();
+    return inb(0x71);
+}
+
+static uint8_t bcd2bin(uint8_t v) {
+    return (uint8_t)((v & 0x0F) + ((v >> 4) * 10));
+}
+
+static void cmd_date(void) {
+    while (cmos_read(0x0A) & 0x80) {}
+    uint8_t sec  = bcd2bin(cmos_read(0x00));
+    uint8_t min  = bcd2bin(cmos_read(0x02));
+    uint8_t hour = bcd2bin(cmos_read(0x04));
+    uint8_t day  = bcd2bin(cmos_read(0x07));
+    uint8_t mon  = bcd2bin(cmos_read(0x08));
+    uint8_t year = bcd2bin(cmos_read(0x09));
+    console_write("Date: 20");
+    print_uint2(year); console_putc('-');
+    print_uint2(mon);  console_putc('-');
+    print_uint2(day);
+    console_write("  Time: ");
+    print_uint2(hour); console_putc(':');
+    print_uint2(min);  console_putc(':');
+    print_uint2(sec);  console_putc('\n');
+}
+
+static const char *calc_pos;
+
+static void calc_skip(void) {
+    while (*calc_pos == ' ') calc_pos++;
+}
+
+static int calc_expr(int *out);
+
+static int calc_factor(int *out) {
+    calc_skip();
+    if (*calc_pos == '(') {
+        calc_pos++;
+        if (!calc_expr(out)) return 0;
+        calc_skip();
+        if (*calc_pos == ')') calc_pos++;
+        return 1;
+    }
+    int neg = 0;
+    if (*calc_pos == '-') { neg = 1; calc_pos++; }
+    if (*calc_pos < '0' || *calc_pos > '9') return 0;
+    int n = 0;
+    while (*calc_pos >= '0' && *calc_pos <= '9') { n = n * 10 + (*calc_pos++ - '0'); }
+    *out = neg ? -n : n;
+    return 1;
+}
+
+static int calc_term(int *out) {
+    int left;
+    if (!calc_factor(&left)) return 0;
+    calc_skip();
+    while (*calc_pos == '*' || *calc_pos == '/') {
+        char op = *calc_pos++;
+        int right;
+        if (!calc_factor(&right)) return 0;
+        if (op == '/') {
+            if (right == 0) { console_writeln("Error: division by zero"); return 0; }
+            left /= right;
+        } else { left *= right; }
+        calc_skip();
+    }
+    *out = left;
+    return 1;
+}
+
+static int calc_expr(int *out) {
+    int left;
+    if (!calc_term(&left)) return 0;
+    calc_skip();
+    while (*calc_pos == '+' || *calc_pos == '-') {
+        char op = *calc_pos++;
+        int right;
+        if (!calc_term(&right)) return 0;
+        left = (op == '+') ? left + right : left - right;
+        calc_skip();
+    }
+    *out = left;
+    return 1;
+}
+
+static void cmd_calc(const char *expr) {
+    if (expr[0] == '\0') { console_writeln("Calculator."); return; }
+    calc_pos = expr;
+    int result;
+    if (!calc_expr(&result)) { console_writeln("Error: invalid expression"); return; }
+    calc_skip();
+    if (*calc_pos != '\0') { console_writeln("Error: unexpected character"); return; }
+    console_write("= ");
+    print_int(result);
+    console_putc('\n');
 }
 
 static void turtle_talk(const char *message) {
@@ -136,6 +255,21 @@ static void run_command(const char *cmd) {
 
     if (starts_with(cmd, "Turtle talk ")) {
         turtle_talk(cmd + 12);
+        return;
+    }
+
+    if (streq(cmd, "date")) {
+        cmd_date();
+        return;
+    }
+
+    if (starts_with(cmd, "calc ")) {
+        cmd_calc(cmd + 5);
+        return;
+    }
+
+    if (streq(cmd, "calc")) {
+        cmd_calc("");
         return;
     }
 
