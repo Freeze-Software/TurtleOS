@@ -99,7 +99,7 @@ void kernel_main(void) {
     console_writeln("The turtle's online shell.");
 
     for (;;) {
-        console_write("TurlteOS> ");
+        console_write("TurtleOS> ");
         cmd_len = 0;
 
         for (;;) {
