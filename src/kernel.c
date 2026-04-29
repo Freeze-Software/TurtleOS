@@ -155,6 +155,25 @@ static void run_command(const char *cmd) {
         return;
     }
 
+    if (streq(cmd, "sysinfo")) {
+            console_writeln("                             ___-------___");
+            console_writeln("                         _-~~             ~~-_");
+            console_writeln("                      _-~                    /~-_");
+            console_writeln("   /^\\__/^\\         /~  \\                   /    \\");
+            console_writeln(" /|  O|| O|        /      \\_______________/        \\");
+            console_writeln("| |___||__|      /       /                \\          \\   OS: TurtleOS");
+            console_writeln("|          \\    /      /                    \\          \\    Kernel: x86_64");
+            console_writeln("|   (_______) /______/                        \\_________ \\   Version: 0.6");
+            console_writeln("|         / /         \\                      /            \\");
+            console_writeln(" \\         \\^\\\\         \\                  /               \\     /");
+            console_writeln("   \\         ||           \\______________/      _-_       //\\__//");
+            console_writeln("     \\       ||------_-~~-_ ------------- \\ --/~   ~\\    || __/");
+            console_writeln("       ~-----||====/~     |==================|       |/~~~~~");
+            console_writeln("        (_(__/  ./     /                    \\_\\      \\");
+            console_writeln("               (_(___/                         \\_____)_)");
+        return;
+    }
+
     if (streq(cmd, "halt")) {
         console_writeln("Halting the turtle's shell...");
         __asm__ volatile("cli");
@@ -188,6 +207,7 @@ void kernel_main(void) {
     console_writeln("        (_(__/  ./     /                    \\_\\      \\");
     console_writeln("               (_(___/                         \\_____)_)");
     console_writeln("Home Computer System");
+    console_writeln("  ");
 
     for (;;) {
         console_write("TurtleOS> ");
