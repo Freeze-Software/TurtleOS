@@ -1,5 +1,4 @@
 #include "kernel.h"
-// Yea this thing is the big bad brainyy smart controller of everything
 #define CMD_BUF_SIZE 128
 
 static int streq(const char *a, const char *b) {
@@ -64,12 +63,12 @@ void reboot(void) {
 static void print_help(void) {
     console_writeln("  help");
     console_writeln("  clear");
-    console_writeln("  echo <text>");
+    console_writeln("  echo");
     console_writeln("  date");
-    console_writeln("  calc <expr>    e.g. calc 3 + 4 * 2");
+    console_writeln("  calc");
     console_writeln("  reboot");
     console_writeln("  halt");
-    console_writeln("  Turtle talk <message>");
+    console_writeln("  Turtle talk");
 }
 
 static void print_uint2(unsigned int n) {
