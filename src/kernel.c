@@ -80,11 +80,26 @@ void kernel_main(void) {
     size_t cmd_len = 0;
 
     console_init();
-    console_writeln("NewOS");
-    console_writeln("Truely new.");
+    console_writeln("TurtleOS v0.6");
+    console_writeln("                             ___-------___");
+    console_writeln("                         _-~~             ~~-_");
+    console_writeln("                      _-~                    /~-_");
+    console_writeln("   /^\\__/^\\         /~  \\                   /    \\");
+    console_writeln(" /|  O|| O|        /      \\_______________/        \\");
+    console_writeln("| |___||__|      /       /                \\          \\");
+    console_writeln("|          \\    /      /                    \\          \\");
+    console_writeln("|   (_______) /______/                        \\_________ \\");
+    console_writeln("|         / /         \\                      /            \\");
+    console_writeln(" \\         \\^\\\\         \\                  /               \\     /");
+    console_writeln("   \\         ||           \\______________/      _-_       //\\__//");
+    console_writeln("     \\       ||------_-~~-_ ------------- \\ --/~   ~\\    || __/");
+    console_writeln("       ~-----||====/~     |==================|       |/~~~~~");
+    console_writeln("        (_(__/  ./     /                    \\_\\      \\");
+    console_writeln("               (_(___/                         \\_____)_)");
+    console_writeln("The turtle's online shell.");
 
     for (;;) {
-        console_write("NewOS> ");
+        console_write("TurlteOS> ");
         cmd_len = 0;
 
         for (;;) {
