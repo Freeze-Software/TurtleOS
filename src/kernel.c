@@ -22,6 +22,37 @@ static int starts_with(const char *s, const char *prefix) {
     return 1;
 }
 
+static char ascii_lower(char c) {
+    if (c >= 'A' && c <= 'Z') {
+        return (char)(c + ('a' - 'A'));
+    }
+    return c;
+}
+
+static int contains_text(const char *text, const char *pattern) {
+    if (*pattern == '\0') {
+        return 1;
+    }
+
+    while (*text) {
+        const char *text_scan = text;
+        const char *pattern_scan = pattern;
+
+        while (*text_scan && *pattern_scan && ascii_lower(*text_scan) == ascii_lower(*pattern_scan)) {
+            text_scan++;
+            pattern_scan++;
+        }
+
+        if (*pattern_scan == '\0') {
+            return 1;
+        }
+
+        text++;
+    }
+
+    return 0;
+}
+
 void reboot(void) {
     uint8_t good = 0x02;
     while (good & 0x02) {
@@ -39,8 +70,53 @@ static void print_help(void) {
     console_writeln("  Turtle talk");
 }
 
-static void turtle_talk(void) {
-    console_writeln("Hello! I am James the turtle, welcome to my shell! How are you doing?");
+static void turtle_talk(const char *message) {
+    if (message[0] == '\0') {
+        console_writeln("James: Hello Folks! I am James the Turtle! how are you?");
+        return;
+    }
+
+    if (contains_text(message, "hello") || contains_text(message, "hi")) {
+        console_writeln("James: Hello there.");
+        return;
+    }
+
+    if (contains_text(message, "how are you") || contains_text(message, "hru")) {
+        console_writeln("James: I am doing good, How are you?");
+        return;
+    }
+
+    if (contains_text(message, "name")) {
+        console_writeln("James: My name? Seriously, well whatever folk, my name is James, James the Turtle.");
+        return;
+    }
+
+    if (contains_text(message, "help")) {
+        console_writeln("James: Ya need help? Dont worry, just ask me some things, and I am glad to answer.");
+        return;
+    }
+
+    if (contains_text(message, "joke")) {
+        console_writeln("James: Sorry but I am not very funny");
+        return;
+    }
+
+    if (contains_text(message, "sad") || contains_text(message, "bad")) {
+        console_writeln("James: Dont worry mates, it will be okay... For me I am just a turtle, I hope things get better for ya. Just keep going.");
+        return;
+    }
+
+    if (contains_text(message, "good") || contains_text(message, "great")) {
+        console_writeln("James: Nice! I am glad to hear that!");
+        return;
+    }
+
+    if (contains_text(message, "bye")) {
+        console_writeln("James: See you later.");
+        return;
+    }
+
+    console_writeln("James: I dont speak very good english, maybe try saying something in Turtalese.");
 }
 
 static void run_command(const char *cmd) {
@@ -54,8 +130,12 @@ static void run_command(const char *cmd) {
     }
 
     if (streq(cmd, "Turtle talk")) {
-        turtle_talk();
-        console_writeln(cmd + 12);
+        turtle_talk("");
+        return;
+    }
+
+    if (starts_with(cmd, "Turtle talk ")) {
+        turtle_talk(cmd + 12);
         return;
     }
 
@@ -91,7 +171,7 @@ void kernel_main(void) {
     size_t cmd_len = 0;
 
     console_init();
-    console_writeln("TurtleOS v0.6");
+    console_writeln("   version 0.6.    ");
     console_writeln("                             ___-------___");
     console_writeln("                         _-~~             ~~-_");
     console_writeln("                      _-~                    /~-_");
@@ -107,7 +187,7 @@ void kernel_main(void) {
     console_writeln("       ~-----||====/~     |==================|       |/~~~~~");
     console_writeln("        (_(__/  ./     /                    \\_\\      \\");
     console_writeln("               (_(___/                         \\_____)_)");
-    console_writeln("The turtle's online shell.");
+    console_writeln("Home Computer System");
 
     for (;;) {
         console_write("TurtleOS> ");

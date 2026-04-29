@@ -1,4 +1,4 @@
-# New OS
+# TurtleOS
 ## Everything
 
 - `src/boot.s`
