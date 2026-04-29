@@ -1,16 +1,9 @@
 #include "kernel.h"
 
-#define ANSI_GREEN_BG_WHITE_FG "\x1b[37;42m"
-#define ANSI_CLEAR_HOME "\x1b[2J\x1b[H"
-
 void console_init(void) {
     vga_init();
     serial_init();
     keyboard_init();
-
-    /* In -nographic mode, serial is rendered by the host terminal. */
-    serial_write(ANSI_GREEN_BG_WHITE_FG);
-    serial_write(ANSI_CLEAR_HOME);
 }
 
 void console_putc(char c) {
@@ -30,7 +23,6 @@ void console_writeln(const char *s) {
 
 void console_clear(void) {
     vga_clear();
-    serial_write(ANSI_CLEAR_HOME);
 }
 
 char console_getc_blocking(void) {
