@@ -411,6 +411,7 @@ void kernel_main(void) {
     size_t cmd_len = 0;
 
     console_init();
+    console_writeln("       ");
     console_writeln("   version 0.6.    ");
     console_writeln("                             ___-------___");
     console_writeln("                         _-~~             ~~-_");
