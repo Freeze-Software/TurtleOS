@@ -32,6 +32,9 @@ void io_wait(void);
 uint8_t inb(uint16_t port);
 void outb(uint16_t port, uint8_t value);
 
+int ata_read_sector(uint32_t lba, void *buffer);
+int ata_write_sector(uint32_t lba, const void *buffer);
+
 void reboot(void);
 
 #endif

@@ -13,8 +13,9 @@ OBJ := $(SRC_C:.c=.o) $(SRC_S:.s=.o)
 KERNEL := build/kernel.elf
 ISO_DIR := build/isofiles
 ISO := build/kernel.iso
+DATA_DISK := build/turtleos-data.img
 
-.PHONY: all clean run run-nographic iso
+.PHONY: all clean run run-nographic iso disk
 
 all: $(KERNEL)
 
@@ -34,16 +35,22 @@ iso: $(KERNEL)
 	cp grub/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
 	grub-mkrescue -o $(ISO) $(ISO_DIR) >/dev/null 2>&1
 
-run: iso
-	@if [ -n "$$DISPLAY" ] || [ -n "$$WAYLAND_DISPLAY" ]; then \
-		qemu-system-i386 -cdrom $(ISO); \
-	else \
-		echo "No GUI display detected, falling back to nographic mode."; \
-		qemu-system-i386 -cdrom $(ISO) -nographic -serial mon:stdio; \
+disk:
+	@mkdir -p build
+	@if [ ! -f $(DATA_DISK) ]; then \
+		dd if=/dev/zero of=$(DATA_DISK) bs=1M count=4 >/dev/null 2>&1; \
 	fi
 
-run-nographic: iso
-	qemu-system-i386 -cdrom $(ISO) -nographic -serial mon:stdio
+run: iso disk
+	@if [ -n "$$DISPLAY" ] || [ -n "$$WAYLAND_DISPLAY" ]; then \
+		qemu-system-i386 -cdrom $(ISO) -drive file=$(DATA_DISK),format=raw,if=ide,index=0,media=disk; \
+	else \
+		echo "No GUI display detected, falling back to nographic mode."; \
+		qemu-system-i386 -cdrom $(ISO) -drive file=$(DATA_DISK),format=raw,if=ide,index=0,media=disk -nographic -serial mon:stdio; \
+	fi
+
+run-nographic: iso disk
+	qemu-system-i386 -cdrom $(ISO) -drive file=$(DATA_DISK),format=raw,if=ide,index=0,media=disk -nographic -serial mon:stdio
 
 clean:
 	rm -rf build src/*.o

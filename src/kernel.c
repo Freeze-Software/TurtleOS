@@ -1,5 +1,24 @@
 #include "kernel.h"
 #define CMD_BUF_SIZE 128
+#define USERNAME_MAX 31
+#define PASSWORD_MAX 63
+#define USER_DB_LBA 2048u
+#define USER_DB_MAGIC 0x54555352u
+#define USER_DB_VERSION 1u
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t checksum;
+    uint8_t has_user;
+    char username[USERNAME_MAX + 1];
+    uint32_t password_hash;
+    uint8_t reserved[467];
+} user_db_sector_t;
+
+static user_db_sector_t g_user_db;
+static int g_logged_in = 0;
+static char g_current_user[USERNAME_MAX + 1];
 
 static int streq(const char *a, const char *b) {
     while (*a && *b) {
@@ -52,6 +71,255 @@ static int contains_text(const char *text, const char *pattern) {
     return 0;
 }
 
+static size_t str_len(const char *s) {
+    size_t n = 0;
+    while (s[n] != '\0') {
+        n++;
+    }
+    return n;
+}
+
+static void mem_zero(void *ptr, size_t n) {
+    uint8_t *p = (uint8_t *)ptr;
+    for (size_t i = 0; i < n; i++) {
+        p[i] = 0;
+    }
+}
+
+static void str_copy(char *dst, size_t dst_size, const char *src) {
+    size_t i = 0;
+    if (dst_size == 0) {
+        return;
+    }
+    while (i + 1 < dst_size && src[i] != '\0') {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+
+static int parse_two_args(const char *s, char *a, size_t a_size, char *b, size_t b_size) {
+    size_t i = 0;
+    size_t j = 0;
+
+    while (*s == ' ') {
+        s++;
+    }
+
+    while (*s && *s != ' ') {
+        if (i + 1 >= a_size) {
+            return 0;
+        }
+        a[i++] = *s++;
+    }
+    a[i] = '\0';
+
+    while (*s == ' ') {
+        s++;
+    }
+
+    while (*s && *s != ' ') {
+        if (j + 1 >= b_size) {
+            return 0;
+        }
+        b[j++] = *s++;
+    }
+    b[j] = '\0';
+
+    while (*s == ' ') {
+        s++;
+    }
+
+    if (i == 0 || j == 0 || *s != '\0') {
+        return 0;
+    }
+
+    return 1;
+}
+
+static void read_line_prompt(const char *prompt, char *buf, size_t buf_size, int hide_input) {
+    size_t len = 0;
+    console_write(prompt);
+
+    for (;;) {
+        char c = console_getc_blocking();
+
+        if (c == '\r' || c == '\n') {
+            console_putc('\n');
+            break;
+        }
+
+        if (c == '\b' || c == 127) {
+            if (len > 0) {
+                len--;
+                console_putc('\b');
+                console_putc(' ');
+                console_putc('\b');
+            }
+            continue;
+        }
+
+        if (c >= 32 && c <= 126 && len + 1 < buf_size) {
+            buf[len++] = c;
+            console_putc(hide_input ? '*' : c);
+        }
+    }
+
+    buf[len] = '\0';
+}
+
+static uint32_t hash_password(const char *username, const char *password) {
+    uint32_t h = 2166136261u;
+    const uint32_t pepper = 0x9E3779B9u;
+
+    while (*username) {
+        h ^= (uint8_t)*username++;
+        h *= 16777619u;
+    }
+    h ^= (uint32_t)':';
+    h *= 16777619u;
+    while (*password) {
+        h ^= (uint8_t)*password++;
+        h *= 16777619u;
+    }
+
+    h ^= pepper;
+    h *= 16777619u;
+    return h;
+}
+
+static uint32_t user_db_checksum(const user_db_sector_t *db) {
+    const uint8_t *bytes = (const uint8_t *)db;
+    uint32_t sum = 5381u;
+
+    for (size_t i = 0; i < sizeof(user_db_sector_t); i++) {
+        if (i >= 8 && i < 12) {
+            continue;
+        }
+        sum = ((sum << 5) + sum) + bytes[i];
+    }
+
+    return sum;
+}
+
+static int user_db_save(void) {
+    g_user_db.checksum = user_db_checksum(&g_user_db);
+    return ata_write_sector(USER_DB_LBA, &g_user_db);
+}
+
+static void user_db_reset(void) {
+    mem_zero(&g_user_db, sizeof(g_user_db));
+    g_user_db.magic = USER_DB_MAGIC;
+    g_user_db.version = USER_DB_VERSION;
+    g_user_db.checksum = user_db_checksum(&g_user_db);
+}
+
+static void user_db_load(void) {
+    if (!ata_read_sector(USER_DB_LBA, &g_user_db)) {
+        user_db_reset();
+        return;
+    }
+
+    if (g_user_db.magic != USER_DB_MAGIC || g_user_db.version != USER_DB_VERSION) {
+        user_db_reset();
+        return;
+    }
+
+    if (g_user_db.checksum != user_db_checksum(&g_user_db)) {
+        user_db_reset();
+        return;
+    }
+}
+
+static int create_user(const char *username, const char *password) {
+    if (str_len(username) == 0 || str_len(password) == 0) {
+        return 0;
+    }
+    if (str_len(username) > USERNAME_MAX || str_len(password) > PASSWORD_MAX) {
+        return 0;
+    }
+
+    user_db_reset();
+    g_user_db.has_user = 1;
+    str_copy(g_user_db.username, sizeof(g_user_db.username), username);
+    g_user_db.password_hash = hash_password(username, password);
+
+    if (!user_db_save()) {
+        return 0;
+    }
+
+    str_copy(g_current_user, sizeof(g_current_user), username);
+    g_logged_in = 1;
+    return 1;
+}
+
+static int try_login(const char *username, const char *password) {
+    uint32_t h;
+
+    if (!g_user_db.has_user) {
+        return 0;
+    }
+    if (!streq(g_user_db.username, username)) {
+        return 0;
+    }
+
+    h = hash_password(username, password);
+    if (h != g_user_db.password_hash) {
+        return 0;
+    }
+
+    str_copy(g_current_user, sizeof(g_current_user), username);
+    g_logged_in = 1;
+    return 1;
+}
+
+static int change_password(const char *old_password, const char *new_password) {
+    if (!g_logged_in || !g_user_db.has_user) {
+        return 0;
+    }
+    if (str_len(new_password) == 0 || str_len(new_password) > PASSWORD_MAX) {
+        return 0;
+    }
+    if (hash_password(g_current_user, old_password) != g_user_db.password_hash) {
+        return 0;
+    }
+
+    g_user_db.password_hash = hash_password(g_current_user, new_password);
+    if (!user_db_save()) {
+        return 0;
+    }
+    return 1;
+}
+
+static void auth_boot_flow(void) {
+    char username[USERNAME_MAX + 1];
+    char password[PASSWORD_MAX + 1];
+
+    user_db_load();
+
+    if (g_user_db.has_user) {
+        str_copy(g_current_user, sizeof(g_current_user), g_user_db.username);
+        g_logged_in = 1;
+        console_write("Auto login: ");
+        console_writeln(g_current_user);
+        return;
+    }
+
+    console_writeln("Account");
+    for (;;) {
+        read_line_prompt("username: ", username, sizeof(username), 0);
+        read_line_prompt("password: ", password, sizeof(password), 1);
+
+        if (create_user(username, password)) {
+            console_write("Account created. Logged in as ");
+            console_writeln(g_current_user);
+            break;
+        }
+
+        console_writeln("Failed to create account.");
+    }
+}
+
 void reboot(void) {
     uint8_t good = 0x02;
     while (good & 0x02) {
@@ -66,7 +334,11 @@ static void print_help(void) {
     console_writeln("  echo");
     console_writeln("  date");
     console_writeln("  calc");
-    console_writeln("  swamp");
+    console_writeln("  useradd");
+    console_writeln("  login");
+    console_writeln("  whoami");
+    console_writeln("  passwd");
+    console_writeln("  sysinfo");
     console_writeln("  reboot");
     console_writeln("  halt");
     console_writeln("  Turtle talk");
@@ -244,7 +516,7 @@ static void cmd_swamp(const char *arg) {
 
     if (arg[0] != '\0') {
         if (!parse_uint(arg, &lines)) {
-            console_writeln("Usage: The swamp [lines]");
+            console_writeln("I am not gonna put anything here yet since im lazy :/");
             return;
         }
     }
@@ -316,6 +588,9 @@ static void turtle_talk(const char *message) {
 }
 
 static void run_command(const char *cmd) {
+    char a[USERNAME_MAX + 1];
+    char b[PASSWORD_MAX + 1];
+
     if (cmd[0] == '\0') {
         return;
     }
@@ -370,6 +645,71 @@ static void run_command(const char *cmd) {
         return;
     }
 
+    if (starts_with(cmd, "useradd ")) {
+        if (!parse_two_args(cmd + 8, a, sizeof(a), b, sizeof(b))) {
+            console_writeln("Usage: useradd");
+            return;
+        }
+        if (g_user_db.has_user) {
+            console_writeln("A user already exists");
+            return;
+        }
+        if (create_user(a, b)) {
+            console_writeln("User created");
+        } else {
+            console_writeln("Failed to create user.");
+        }
+        return;
+    }
+
+    if (starts_with(cmd, "login ")) {
+        if (!parse_two_args(cmd + 6, a, sizeof(a), b, sizeof(b))) {
+            console_writeln("Usage: login");
+            return;
+        }
+        if (try_login(a, b)) {
+            console_write("Logged in as ");
+            console_writeln(g_current_user);
+        } else {
+            console_writeln("Login failed.");
+        }
+        return;
+    }
+
+    if (streq(cmd, "logout")) {
+        if (!g_logged_in) {
+            console_writeln("Not logged in.");
+            return;
+        }
+        g_logged_in = 0;
+        g_current_user[0] = '\0';
+        console_writeln("Logged out.");
+        reboot();
+        return;
+    }
+
+    if (streq(cmd, "whoami")) {
+        if (g_logged_in) {
+            console_writeln(g_current_user);
+        } else {
+            console_writeln("Error");
+        }
+        return;
+    }
+
+    if (starts_with(cmd, "passwd ")) {
+        if (!parse_two_args(cmd + 7, a, sizeof(a), b, sizeof(b))) {
+            console_writeln("Usage: passwd ");
+            return;
+        }
+        if (change_password(a, b)) {
+            console_writeln("Password changed.");
+        } else {
+            console_writeln("Password change failed.");
+        }
+        return;
+    }
+
     if (streq(cmd, "reboot")) {
         console_writeln("Rebooting...");
         reboot();
@@ -396,14 +736,14 @@ static void run_command(const char *cmd) {
     }
 
     if (streq(cmd, "halt")) {
-        console_writeln("Halting the turtle's shell...");
+        console_writeln("Halting...");
         __asm__ volatile("cli");
         for (;;) {
             __asm__ volatile("hlt");
         }
     }
 
-    console_writeln("Unknown command. Type 'help'.");
+    console_writeln("command not found");
 }
 
 void kernel_main(void) {
@@ -428,7 +768,10 @@ void kernel_main(void) {
     console_writeln("       ~-----||====/~     |==================|       |/~~~~~");
     console_writeln("        (_(__/  ./     /                    \\_\\      \\");
     console_writeln("               (_(___/                         \\_____)_)");
-    console_writeln("Home Computer System");
+    console_writeln("\033[32mHome Computer System\033[0m");
+    console_writeln("  ");
+
+    auth_boot_flow();
     console_writeln("  ");
 
     for (;;) {
