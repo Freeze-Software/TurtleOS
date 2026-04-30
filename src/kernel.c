@@ -377,21 +377,21 @@ static void run_command(const char *cmd) {
     }
 
     if (streq(cmd, "sysinfo")) {
-            console_writeln("                             ___-------___");
-            console_writeln("                         _-~~             ~~-_");
-            console_writeln("                      _-~                    /~-_");
-            console_writeln("   /^\\__/^\\         /~  \\                   /    \\");
-            console_writeln(" /|  O|| O|        /      \\_______________/        \\");
-            console_writeln("| |___||__|      /       /                \\          \\   OS: TurtleOS");
-            console_writeln("|          \\    /      /                    \\          \\    Kernel: x86_64");
-            console_writeln("|   (_______) /______/                        \\_________ \\   Version: 0.6");
-            console_writeln("|         / /         \\                      /            \\");
-            console_writeln(" \\         \\^\\\\         \\                  /               \\     /");
-            console_writeln("   \\         ||           \\______________/      _-_       //\\__//");
-            console_writeln("     \\       ||------_-~~-_ ------------- \\ --/~   ~\\    || __/");
-            console_writeln("       ~-----||====/~     |==================|       |/~~~~~");
-            console_writeln("        (_(__/  ./     /                    \\_\\      \\");
-            console_writeln("               (_(___/                         \\_____)_)");
+            console_writeln("\033[32m                             ___-------___\033[0m");
+            console_writeln("\033[32m                         _-~~             ~~-_\033[0m");
+            console_writeln("\033[32m                      _-~                    /~-_\033[0m");
+            console_writeln("\033[32m   /^\\__/^\\         /~  \\                   /    \\\033[0m");
+            console_writeln("\033[32m /|  O|| O|        /      \\_______________/        \\\033[0m");
+            console_writeln("\033[32m| |___||__|      /       /                \\          \\   \033[36mOS: TurtleOS\033[0m");
+            console_writeln("\033[32m|          \\    /      /                    \\          \\    \033[36mKernel: x86_64\033[0m");
+            console_writeln("\033[32m|   (_______) /______/                        \\_________ \\   \033[36mVersion: 0.6\033[0m");
+            console_writeln("\033[32m|         / /         \\                      /            \\\033[0m");
+            console_writeln("\033[32m \\         \\^\\\\         \\                  /               \\     /\033[0m");
+            console_writeln("\033[32m   \\         ||           \\______________/      _-_       //\\__//\033[0m");
+            console_writeln("\033[32m     \\       ||------_-~~-_ ------------- \\ --/~   ~\\    || __/\033[0m");
+            console_writeln("\033[32m       ~-----||====/~     |==================|       |/~~~~~\033[0m");
+            console_writeln("\033[32m        (_(__/  ./     /                    \\_\\      \\\033[0m");
+            console_writeln("\033[32m               (_(___/                         \\_____)_)\033[0m");
         return;
     }
 
