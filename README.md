@@ -13,7 +13,7 @@
 - `grub/grub.cfg`
 - `Makefile`
 
-## gow to run
+## How to run
 run:
 ```bash
 make clean
