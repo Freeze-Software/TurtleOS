@@ -63,7 +63,7 @@ int ata_read_sector(uint32_t lba, void *buffer) {
     }
 
     for (int i = 0; i < 256; i++) {
-        __asm__ volatile("inw %1, %0" : "=a"(data[i]) : "Nd"(ATA_REG_DATA));
+        __asm__ volatile("inw %w1, %w0" : "=a"(data[i]) : "Nd"(ATA_REG_DATA): "memory");
     }
 
     return 1;
@@ -88,7 +88,7 @@ int ata_write_sector(uint32_t lba, const void *buffer) {
     }
 
     for (int i = 0; i < 256; i++) {
-        __asm__ volatile("outw %0, %1" : : "a"(data[i]), "Nd"(ATA_REG_DATA));
+        __asm__ volatile("outw %w0, %w1" : : "a"(data[i]), "Nd"(ATA_REG_DATA): "memory");
     }
 
     io_wait();
