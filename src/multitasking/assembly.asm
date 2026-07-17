@@ -2,9 +2,11 @@ global timer_stub
 extern schedule
 extern current_task
 extern tasks
+extern pit_ticks
 
 timer_stub:
     cli
+    inc dword [pit_ticks]
     pusha
     mov eax, [current_task]
     imul eax, 44

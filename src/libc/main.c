@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stddef.h>
 
 void* memcpy(void* dest, const void* src, unsigned int n) {
     uint32_t* d32 = (uint32_t*)dest;
@@ -17,6 +18,21 @@ void* memcpy(void* dest, const void* src, unsigned int n) {
     }
 
     return dest;
+}
+
+char *strchr(const char *str, int c) {
+    while (*str)
+    {
+        if (*str == (char)c)
+            return (char *)str;
+
+        str++;
+    }
+
+    if (c == '\0')
+        return (char *)str;
+
+    return NULL;
 }
 
 int strncmp(const char *a, const char *b, uint32_t n) {
@@ -53,6 +69,22 @@ char *strncpy(char *dst, const char *src, uint32_t n) {
     for (; i < n; i++)
         dst[i] = 0;
     return dst;
+}
+
+int strlen(char* str) {
+	int len = 0;
+	for (int i = 0; str[i] != '\0'; i++) {
+		len++;
+	}
+	return len;
+}
+
+int strnlen(char* str, int maxlen) {
+	int len = 0;
+	for (int i = 0; str[i] != '\0' && len < maxlen; i++) {
+		len++;
+	}
+	return len;
 }
 
 uint32_t string_to_hex(const char *str) {

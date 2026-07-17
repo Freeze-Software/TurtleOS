@@ -99,6 +99,11 @@ int ata_write_sector(uint32_t lba, const void *buffer) {
     return ata_wait_not_busy();
 }
 
+int ata_zero_sector(uint32_t lba) {
+	uint8_t sector[512] = {0};
+	return ata_write_sector(lba, sector);
+}
+
 uint32_t ata_get_sector_count() {
     uint16_t buf[256];
     ata_wait_not_busy();

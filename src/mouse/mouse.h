@@ -9,6 +9,8 @@ extern uint8_t mouse_cycle;
 typedef struct {
     int x;
     int y;
+    int last_x;
+    int last_y;
     uint8_t left;
     uint8_t right;
     uint8_t middle;

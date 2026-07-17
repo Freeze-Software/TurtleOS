@@ -55,6 +55,7 @@ void outb(uint16_t port, uint8_t value);
 // ---------------- ATA ----------------
 int ata_read_sector(uint32_t lba, void *buffer);
 int ata_write_sector(uint32_t lba, const void *buffer);
+int ata_zero_sector(uint32_t lba);
 uint32_t ata_get_sector_count();
 
 // ---------------- SYSTEM ----------------

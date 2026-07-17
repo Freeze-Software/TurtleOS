@@ -5,7 +5,9 @@
 #include "multitasking/task.h"
 #include "arch/idt.h"
 #include "arch/gdt.h"
+#include "wm/main.h"
 #include "keyboard/keyboard.h"
+#include "fs/main.h"
 #include "display.h"
 #include "pci/pci.h"
 #include "pit/pit.h"
@@ -30,6 +32,8 @@ typedef struct __attribute__((packed)) {
 static user_db_sector_t g_user_db;
 static int g_logged_in = 0;
 static char g_current_user[USERNAME_MAX + 1];
+
+int current_dir_id = 0;
 
 static int streq(const char *a, const char *b) {
     while (*a && *b) {
@@ -757,6 +761,214 @@ static void run_command(const char *cmd) {
         return;
     }
 
+    if (starts_with(cmd, "wm ")) {
+	const char* color_str = cmd + 3;
+	uint32_t color_int = string_to_hex(color_str);
+	wm_background_color = color_int;
+        int window = create_window("Test", 100, 100);
+	window_pixel_chessboard(window);
+        add_task(wm_render, "Window Manager", 8096);
+        return;
+    }
+
+	if (streq(cmd, "ls")) {
+
+	   fs_entry_t entries[64];
+
+	   int count = list_dir(
+		current_dir_id,
+		entries,
+		64
+	   );
+
+	   for (int i = 0; i < count; i++) {
+                char* entry = entries[i].name;
+			
+
+		console_writefln(
+		   "%s %s",
+		   entries[i].type == 2
+			? "<DIR>"
+			: "<FILE>",
+		   entries[i].name
+		);
+	   }
+
+	   return;
+	}
+
+	if (starts_with(cmd, "cd ")) {
+	   const char* name = cmd + 3;
+
+	   if (name[0] == '-') {
+                fs_entry_t entry;
+                get_entry_by_id(current_dir_id, &entry, NULL, NULL);
+		current_dir_id = entry.parent;
+		return;
+	   }
+
+	   int id = find_entry(
+		(char*)name,
+		current_dir_id
+	   );
+
+	   if (id < 0) {
+		console_writefln("Directory not found", true, 0, 0);
+		return;
+	   }
+
+	   fs_entry_t entry;
+
+	   if (get_entry_by_id(
+		id,
+		&entry,
+		NULL,
+		NULL
+	   ) < 0) {
+		return;
+	   }
+
+	   if (entry.type != 2) {
+		console_writefln("Not a directory", true, 0, 0);
+		return;
+	   }
+
+	   current_dir_id = id;
+	   return;
+	}
+
+	if (starts_with(cmd, "mkdir ")) {
+
+	   const char* name = cmd + 6;
+
+	   int id = make_dir(
+		(char*)name,
+		current_dir_id
+	   );
+
+	   console_writefln(
+		"Directory created (%d)",
+		id
+	   );
+
+	   return;
+	}
+
+	if (starts_with(cmd, "touch ")) {
+
+	   const char* name = cmd + 6;
+
+	   int id = make_file(
+		(char*)name,
+		current_dir_id,
+		1024
+	   );
+
+	   console_writefln(
+		"File created (%d)",
+		id
+	   );
+
+	   return;
+	}
+
+	if (starts_with(cmd, "cat ")) {
+
+	   const char* name = cmd + 4;
+
+	   int id = find_entry(
+		(char*)name,
+		current_dir_id
+	   );
+
+	   if (id < 0) {
+		console_writefln("File not found");
+		return;
+	   }
+
+	   int size = file_get_size(id);
+
+	   char* buffer = malloc(size + 1);
+
+	   file_read(id, buffer);
+
+	   buffer[size] = '\0';
+
+	   console_writefln("%s", buffer);
+
+	   free(buffer);
+
+	   return;
+	}
+
+	if (starts_with(cmd, "write ")) {
+
+	   char* filename = cmd + 6;
+
+	   char* text = strchr(filename, ' ');
+
+	   if (!text) {
+		console_writefln("Usage: write <file> <text>");
+		return;
+	   }
+
+	   *text = '\0';
+	   text++;
+
+	   int id = find_entry(
+		filename,
+		current_dir_id
+	   );
+
+	   if (id < 0) {
+		console_writefln("File not found");
+		return;
+	   }
+
+	   file_write(
+		id,
+		text,
+		strlen(text)
+	   );
+
+	   console_writefln("Written");
+
+	   return;
+	}
+
+	if (starts_with(cmd, "rm ")) {
+	   const char* name = cmd + 3;
+
+	   int id = find_entry(
+		(char*)name,
+		current_dir_id
+	   );
+
+	   if (id < 0) {
+		console_writefln("Not found");
+		return;
+	   }
+
+	   fs_entry_t entry;
+
+	   get_entry_by_id(
+		id,
+		&entry,
+		NULL,
+		NULL
+	   );
+
+	   if (entry.type == 1) {
+		file_delete(id);
+	   } else {
+		dir_delete(id);
+	   }
+
+	   console_writefln("Deleted");
+
+	   return;
+	}
+
     if (streq(cmd, "whoami")) {
         if (g_logged_in) {
             console_writeln(g_current_user);
@@ -846,6 +1058,15 @@ void shell() {
     console_writeln("  ");
     set_console_fg_color(0xFFFFFF);
     pci_enumerate(&g_pci_bus);
+    if (!tfs_mount()) {
+	    console_writeln("Seems like you're not formated to TFS!");
+	    tfs_format();
+	    tfs_mount();
+    }
+    int disk_size_bytes = ata_get_sector_count() * 512;
+    console_writefln("Disk size(sectors): %d", ata_get_sector_count());
+    console_writefln("Disk size(KiB): %d", disk_size_bytes / 1024);
+    console_writefln("Disk size(MiB): %d", disk_size_bytes / (1024 * 1024));
     auth_boot_flow();
     //console_writeln("  ");
     int new_prompt = 1;
