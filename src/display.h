@@ -23,8 +23,6 @@ typedef struct {
 extern display screen;
 
 int strcmp(const char* a, const char* b);
-void itoa(int value, char* buffer, int base);
-int atoi(const char* str);
 
 void init_display(uint64_t adress, uint32_t iwidth, uint32_t iheight,
                    uint32_t ipitch, uint8_t ibpp);

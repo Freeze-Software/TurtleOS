@@ -11,6 +11,7 @@
 #include "display.h"
 #include "pci/pci.h"
 #include "pit/pit.h"
+#include "libc/main.h"
 #include <stdint.h>
 #define CMD_BUF_SIZE 128
 #define USERNAME_MAX 31
@@ -19,19 +20,30 @@
 #define USER_DB_MAGIC 0x54555352u
 #define USER_DB_VERSION 1u
 
-typedef struct __attribute__((packed)) {
-    uint32_t magic;
-    uint32_t version;
-    uint32_t checksum;
-    uint8_t has_user;
-    char username[USERNAME_MAX + 1];
-    uint32_t password_hash;
-    uint8_t reserved[467];
-} user_db_sector_t;
+typedef struct {
+	int free;
+	char user[USERNAME_MAX + 1];
+	uint64_t password_hash;
+} user_t;
 
-static user_db_sector_t g_user_db;
+typedef struct {
+	user_t users[16];
+	int has_users;
+}user_db_t;
+
+user_db_t user_db;
 static int g_logged_in = 0;
 static char g_current_user[USERNAME_MAX + 1];
+
+void print_user_db() {
+	for (int i = 0; i < 16; i++) {
+		char username[16];
+		strncpy(username, user_db.users[i].user, 15);
+		username[15] = '\0';
+		console_writefln("User: ", username);
+		console_writefln("Hash: %d", user_db.users[i].password_hash);
+	}
+}
 
 int current_dir_id = 0;
 
@@ -204,6 +216,7 @@ static uint32_t hash_password(const char *username, const char *password) {
     return h;
 }
 
+/*
 static uint32_t user_db_checksum(const user_db_sector_t *db) {
     const uint8_t *bytes = (const uint8_t *)db;
     uint32_t sum = 5381u;
@@ -217,19 +230,53 @@ static uint32_t user_db_checksum(const user_db_sector_t *db) {
 
     return sum;
 }
+*/
 
-static int user_db_save(void) {
-    g_user_db.checksum = user_db_checksum(&g_user_db);
-    return ata_write_sector(USER_DB_LBA, &g_user_db);
+int user_db_save(void) {
+	int users_file = find_entry("users", find_entry("etc", 0));
+	int success = file_write(users_file, &user_db, sizeof(user_db));
+	if (success == 0) {
+		success = 1;
+	}
+	console_writefln("Save Success: %d", success);
+	return success;
+}
+
+int user_db_load(void) {
+    int users_file = find_entry("users", find_entry("etc", 0));
+    size_t size = file_get_size(users_file);
+
+    if (size < sizeof(user_db)) {
+        console_writeln("User file size mismatch");
+        return -1;
+    }
+
+    size_t alloc_size = (sizeof(user_db) + 511) & ~511;
+    void *buffer = malloc(alloc_size);
+    int success = file_read(users_file, buffer);
+
+    console_writefln("File read success: %d", success);
+
+    if (success == 0) {
+        memcpy(&user_db, buffer, sizeof(user_db));
+        success = 1;
+    }
+
+    free(buffer);
+    console_writefln("Load Success: %d", success);
+    return success;
 }
 
 static void user_db_reset(void) {
-    mem_zero(&g_user_db, sizeof(g_user_db));
-    g_user_db.magic = USER_DB_MAGIC;
-    g_user_db.version = USER_DB_VERSION;
-    g_user_db.checksum = user_db_checksum(&g_user_db);
+    mem_zero(&user_db, sizeof(user_db));
+    for (int i = 0; i < 16; i++) {
+	    user_db.users[i].free = 1;
+    }
+    user_db_save();
+    user_db_load();
 }
 
+/*
 static void user_db_load(void) {
     if (!ata_read_sector(USER_DB_LBA, &g_user_db)) {
         user_db_reset();
@@ -246,8 +293,14 @@ static void user_db_load(void) {
         return;
     }
 }
+*/
 
 static int create_user(const char *username, const char *password) {
+    char log_out[128];
+    int home_dir_id = find_entry("home", 0);
+    make_dir((char*)username, home_dir_id);
+    sprintf(log_out, "Made new home directory for %s", username);
+    log(log_out, "SHELL");
     if (str_len(username) == 0 || str_len(password) == 0) {
         return 0;
     }
@@ -255,13 +308,33 @@ static int create_user(const char *username, const char *password) {
         return 0;
     }
 
-    user_db_reset();
-    g_user_db.has_user = 1;
-    str_copy(g_user_db.username, sizeof(g_user_db.username), username);
-    g_user_db.password_hash = hash_password(username, password);
+    user_db.has_users = 1;
+    int found_free_slot = 0;
+    for (int i = 0; i < 16; i++) {
+	sprintf(log_out, "Slot %d Free: %d", i, user_db.users[i].free);
+	log(log_out, "SHELL");
+    }
+    for (int i = 0; i < 16; i++) {
+	    if (user_db.users[i].free == 1) {
+		sprintf(log_out, "User Slot %d is free for %s", i, username);
+		log(log_out, "SHELL");
+		user_db.users[i].free = 0;
+		strncpy(user_db.users[i].user, username, strlen((char*)username));
+		user_db.users[i].password_hash = hash_password(username, password);
+		found_free_slot = 1;
+		break;
+	    } else {
+		    continue;
+	    }
+    }
 
-    if (!user_db_save()) {
+    if (user_db_save() != 1) {
+	log("Failed to save User DB", "SHELL");
         return 0;
+    }
+
+    if (found_free_slot == 0) {
+	    log("Couldn't find free User Slot", "SHELL");
     }
 
     str_copy(g_current_user, sizeof(g_current_user), username);
@@ -270,18 +343,33 @@ static int create_user(const char *username, const char *password) {
 }
 
 static int try_login(const char *username, const char *password) {
+    user_db_load();
     uint32_t h;
 
-    if (!g_user_db.has_user) {
+    if (!user_db.has_users) {
         return 0;
     }
-    if (!streq(g_user_db.username, username)) {
-        return 0;
+    int user_exists = 0;
+    for (int i = 0; i < 16; i++) {
+	    if (streq(user_db.users[i].user, username)) {
+		    user_exists = 1;
+	    }
+    }
+
+    if (user_exists == 0) {
+	    console_writeln("User doesn't exist");
+	    return 0;
     }
 
     h = hash_password(username, password);
-    if (h != g_user_db.password_hash) {
-        return 0;
+    for (int i = 0; i < 16; i++) {
+	    if (!streq(user_db.users[i].user, username)) {
+		    continue;
+	    }
+	    if (user_db.users[i].password_hash != h) {
+		    console_writeln("Wrong password");
+		    return 0;
+	    }
     }
 
     str_copy(g_current_user, sizeof(g_current_user), username);
@@ -289,18 +377,24 @@ static int try_login(const char *username, const char *password) {
     return 1;
 }
 
-static int change_password(const char *old_password, const char *new_password) {
-    if (!g_logged_in || !g_user_db.has_user) {
-        return 0;
-    }
-    if (str_len(new_password) == 0 || str_len(new_password) > PASSWORD_MAX) {
-        return 0;
-    }
-    if (hash_password(g_current_user, old_password) != g_user_db.password_hash) {
-        return 0;
-    }
+static int change_password(const char* username, const char *old_password, const char *new_password) {
+	int user_exists = 0;
+	int user_id = -1;
+	for (int i = 0; i < 16; i++) {
+		if (streq(user_db.users[i].user, username)) {
+			user_exists = 1;
+			user_id = i;
+		}
+	} 
 
-    g_user_db.password_hash = hash_password(g_current_user, new_password);
+	if (user_exists == 0) {
+		return 0;
+	}
+
+	if (hash_password(username, old_password) == user_db.users[user_id].password_hash) {
+		user_db.users[user_id].password_hash = hash_password(username, new_password);
+	}
+
     if (!user_db_save()) {
         return 0;
     }
@@ -313,13 +407,14 @@ static void auth_boot_flow(void) {
 
     user_db_load();
 
-    if (g_user_db.has_user) {
+    if (user_db.has_users) {
 	console_writeln("--Login--");
 	for (int logins = 0; logins < 3; logins ++) {
-            console_write("User: "); console_writeln(g_user_db.username);
+            read_line_prompt("Username: ", username, sizeof(username), 0);
 	    read_line_prompt("Password: ", password, sizeof(password), 1);
-	    int success = try_login(g_user_db.username, password);
+	    int success = try_login(username, password);
 	    if (success == 1) {
+		current_dir_id = find_entry(g_current_user, find_entry("home", 0));
 		console_writeln("Success!");
 		return;
 	    } else {
@@ -332,12 +427,13 @@ static void auth_boot_flow(void) {
 
     console_writeln("Account");
     for (;;) {
-        read_line_prompt("username: ", username, sizeof(username), 0);
-        read_line_prompt("password: ", password, sizeof(password), 1);
+        read_line_prompt("Username: ", username, sizeof(username), 0);
+        read_line_prompt("Password: ", password, sizeof(password), 1);
 
         if (create_user(username, password)) {
             console_write("Account created. Logged in as ");
             console_writeln(g_current_user);
+	    current_dir_id = find_entry(g_current_user, find_entry("home", 0));
             break;
         }
 
@@ -353,21 +449,14 @@ void reboot(void) {
     outb(0x64, 0xFE);
 }
 
+char* help_cmds[] = {"help", "clear", "echo", "date", "calc", "useradd", "login", "whoami", "passwd", "sysinfo", "reboot", "halt", "Turtle talk", "color", "wm", "ls", "write", "mkdir", "rm", "touch", "crash"};
+
+#define CMD_COUNT 21
+
 static void print_help(void) {
-    console_writeln("  help");
-    console_writeln("  clear");
-    console_writeln("  echo");
-    console_writeln("  date");
-    console_writeln("  calc");
-    console_writeln("  useradd");
-    console_writeln("  login");
-    console_writeln("  whoami");
-    console_writeln("  passwd");
-    console_writeln("  sysinfo");
-    console_writeln("  reboot");
-    console_writeln("  halt");
-    console_writeln("  Turtle talk");
-    console_writeln("  color");
+	for (int i = 0; i < CMD_COUNT; i++) {
+		console_writefln("  %s", help_cmds[i]);
+	}
 }
 
 static void print_uint2(unsigned int n) {
@@ -634,8 +723,18 @@ static void run_command(const char *cmd) {
         return;
     }
 
+    if (streq(cmd, "crash")) {
+	    asm volatile("int $0");
+	    return;
+    }
+
     if (streq(cmd, "ptop")) {
 	    cmd_ptop();
+	    return;
+    }
+
+    if (streq(cmd, "log")) {
+	    log_print();
 	    return;
     }
 
@@ -720,11 +819,7 @@ static void run_command(const char *cmd) {
 
     if (starts_with(cmd, "useradd ")) {
         if (!parse_two_args(cmd + 8, a, sizeof(a), b, sizeof(b))) {
-            console_writeln("Usage: useradd");
-            return;
-        }
-        if (g_user_db.has_user) {
-            console_writeln("A user already exists");
+            console_writeln("Usage: useradd user password");
             return;
         }
         if (create_user(a, b)) {
@@ -765,8 +860,12 @@ static void run_command(const char *cmd) {
 	const char* color_str = cmd + 3;
 	uint32_t color_int = string_to_hex(color_str);
 	wm_background_color = color_int;
-        int window = create_window("Test", 100, 100);
+        int window = create_window("Test", 100, 100, 1);
 	window_pixel_chessboard(window);
+	int window2 = create_window("Test2", 100, 100, 1);
+	window_printf(window2, 0, 0, 1, 0x0000FF, 0x00FF00, "Hi!");
+	//int window3 = create_window("Test3", 100, 100);
+	//window_printf(window3, 0, 0, 1, 0x0000FF, 0x00FF00, "Current User: %s", g_current_user);
         add_task(wm_render, "Window Manager", 8096);
         return;
     }
@@ -978,12 +1077,16 @@ static void run_command(const char *cmd) {
         return;
     }
 
-    if (starts_with(cmd, "passwd ")) {
-        if (!parse_two_args(cmd + 7, a, sizeof(a), b, sizeof(b))) {
-            console_writeln("Usage: passwd ");
-            return;
-        }
-        if (change_password(a, b)) {
+    if (starts_with(cmd, "passwd")) {
+	char username[USERNAME_MAX + 1];
+	char old_password[PASSWORD_MAX + 1];
+	char new_password[PASSWORD_MAX + 1];
+
+	read_line_prompt("Username: ", username, sizeof(username), 0);
+	read_line_prompt("Current password: ", old_password, sizeof(old_password), 1);
+	read_line_prompt("New password: ", new_password, sizeof(new_password), 1);
+
+        if (change_password(username, old_password, new_password)) {
             console_writeln("Password changed.");
         } else {
             console_writeln("Password change failed.");
@@ -1029,11 +1132,36 @@ static void run_command(const char *cmd) {
     console_writeln("command not found");
 }
 
+void print_current_dir_complete() {
+    int dir_id = current_dir_id;
+
+    fs_entry_t path[64];
+    int depth = 0;
+
+    while (dir_id != -1 && dir_id != 0 && depth < 64) {
+        if (get_entry_by_id(dir_id, &path[depth], NULL, NULL) < 0) {
+            break;
+        }
+        dir_id = path[depth].parent;
+        depth++;
+    }
+
+    console_write("/");
+
+    for (int i = depth - 1; i >= 0; i--) {
+        console_write(path[i].name);
+        console_write("/");
+    }
+}
+
 void write_prompt() {
-	console_write("TurtleOS> ");
+	print_current_dir_complete();
+	console_write(" TurtleOS> ");
 }
 
 void shell() {
+    log_init();
+    log("Successfully inited logging", "SHELL");
     char cmd_buf[CMD_BUF_SIZE];
     size_t cmd_len = 0;
     set_console_fg_color(0x00FF00);
@@ -1057,16 +1185,32 @@ void shell() {
     console_writeln("\033[32mHome Computer System\033[0m");
     console_writeln("  ");
     set_console_fg_color(0xFFFFFF);
+    console_writeln("----PCI----");
     pci_enumerate(&g_pci_bus);
+    console_writeln("----DISK----");
     if (!tfs_mount()) {
 	    console_writeln("Seems like you're not formated to TFS!");
 	    tfs_format();
-	    tfs_mount();
+	    log("Making Directories for new formated disk", "SHELL");
+	    int etc_id = make_dir("etc", 0);
+	    make_dir("home", 0);
+	    make_file("users", etc_id, sizeof(user_db_t));
+	    user_db_reset();
     }
     int disk_size_bytes = ata_get_sector_count() * 512;
     console_writefln("Disk size(sectors): %d", ata_get_sector_count());
     console_writefln("Disk size(KiB): %d", disk_size_bytes / 1024);
     console_writefln("Disk size(MiB): %d", disk_size_bytes / (1024 * 1024));
+    char disk_log_out[128];
+    sprintf(disk_log_out, "Disk size in MB: %d", disk_size_bytes / (1024 * 1024));
+    log(disk_log_out, "SHELL");
+    console_writeln("----HEAP----");
+    heap_stats_t heap_stats = heap_get_stats();
+    console_writefln("HEAP: %d", heap_stats.total);
+    console_writefln("USED: %d", heap_stats.used);
+    console_writefln("FREE: %d", heap_stats.free);
+    console_writefln("----LOGIN----");
+    user_db_load();
     auth_boot_flow();
     //console_writeln("  ");
     int new_prompt = 1;

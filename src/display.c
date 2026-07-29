@@ -1,4 +1,5 @@
 #include "display.h"
+#include "libc/main.h"
 
 display screen;
 
@@ -10,60 +11,6 @@ int strcmp(const char* a, const char* b) {
         b++;
     }
     return *a - *b;
-}
-
-void itoa(int value, char* buffer, int base) {
-    char* digits = "0123456789ABCDEF";
-    char temp[32];
-    int i = 0;
-    int is_negative = 0;
-
-    if (value == 0) {
-        buffer[0] = '0';
-        buffer[1] = 0;
-        return;
-    }
-
-    if (value < 0 && base == 10) {
-        is_negative = 1;
-        value = -value;
-    }
-
-    while (value > 0) {
-        temp[i++] = digits[value % base];
-        value /= base;
-    }
-
-    if (is_negative) {
-        temp[i++] = '-';
-    }
-
-    int j = 0;
-    while (i--) {
-        buffer[j++] = temp[i];
-    }
-
-    buffer[j] = 0;
-}
-
-int atoi(const char* str) {
-    int result = 0;
-    int sign = 1;
-
-    if (*str == '-') {
-        sign = -1;
-        str++;
-    }
-
-    while (*str) {
-        if (*str < '0' || *str > '9')
-            break;
-
-        result = result * 10 + (*str - '0');
-        str++;
-    }
-
-    return result * sign;
 }
 
 void init_display(uint64_t adress, uint32_t iwidth, uint32_t iheight, uint32_t ipitch, uint8_t ibpp) {

@@ -1,5 +1,50 @@
 #include <stdint.h>
 #include <stddef.h>
+#include <stdarg.h>
+
+char *itoa(int value, char *str, int base) {
+    char *ptr = str;
+    char *ptr1 = str;
+    char tmp;
+    int negative = 0;
+
+    if (base < 2 || base > 16) {
+        *str = '\0';
+        return str;
+    }
+
+    if (value == 0) {
+        str[0] = '0';
+        str[1] = '\0';
+        return str;
+    }
+
+    if (value < 0 && base == 10) {
+        negative = 1;
+        value = -value;
+    }
+
+    while (value) {
+        int digit = value % base;
+        *ptr++ = (digit < 10) ? ('0' + digit) : ('a' + digit - 10);
+        value /= base;
+    }
+
+    if (negative)
+        *ptr++ = '-';
+
+    *ptr-- = '\0';
+
+    while (ptr1 < ptr) {
+        tmp = *ptr;
+        *ptr = *ptr1;
+        *ptr1 = tmp;
+        ptr--;
+        ptr1++;
+    }
+
+    return str;
+}
 
 void* memcpy(void* dest, const void* src, unsigned int n) {
     uint32_t* d32 = (uint32_t*)dest;
@@ -113,4 +158,60 @@ uint32_t string_to_hex(const char *str) {
     }
 
     return result;
+}
+
+int vsprintf(char *out, const char *fmt, va_list args)
+{
+    char buffer[32];
+    int pos = 0;
+
+    for (int i = 0; fmt[i] != '\0'; i++) {
+        if (fmt[i] == '%') {
+            i++;
+
+            switch (fmt[i]) {
+            case 's': {
+                char *s = va_arg(args, char *);
+                while (*s)
+                    out[pos++] = *s++;
+                break;
+            }
+
+            case 'd':
+                itoa(va_arg(args, int), buffer, 10);
+                for (int j = 0; buffer[j]; j++)
+                    out[pos++] = buffer[j];
+                break;
+
+            case 'x':
+                itoa(va_arg(args, int), buffer, 16);
+                for (int j = 0; buffer[j]; j++)
+                    out[pos++] = buffer[j];
+                break;
+
+            case 'c':
+                out[pos++] = (char)va_arg(args, int);
+                break;
+
+            case '%':
+                out[pos++] = '%';
+                break;
+            }
+        } else {
+            out[pos++] = fmt[i];
+        }
+    }
+
+    out[pos] = '\0';
+    return pos;
+}
+
+int sprintf(char *out, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+
+    int len = vsprintf(out, fmt, args);
+
+    va_end(args);
+    return len;
 }

@@ -84,6 +84,10 @@ int enable_task(int id) {
 	}
 }
 
+int get_current_task() {
+	return current_task;
+}
+
 int get_task_count() {
 	return tasks_count;
 }

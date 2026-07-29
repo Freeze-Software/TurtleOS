@@ -61,4 +61,9 @@ uint32_t ata_get_sector_count();
 // ---------------- SYSTEM ----------------
 void reboot(void);
 
+// ---------------- LOGGING ----------------
+void log_init();
+void log(char* string, char* name);
+void log_print();
+
 #endif

@@ -1,5 +1,9 @@
 #include <stdint.h>
+#include <stdarg.h>
 
+int vsprintf(char *out, const char *fmt, va_list args);
+int sprintf(char *out, const char *fmt, ...);
+char *itoa(int value, char *str, int base);
 uint32_t string_to_hex(const char *str);
 int memcmp(const void *a, const void *b, uint32_t n);
 char *strchr(const char *str, int c);

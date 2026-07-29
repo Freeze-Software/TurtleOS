@@ -12,7 +12,6 @@
 #include "../multitasking/task.h"
 #include "../display.h"
 #include "../pit/pit.h"
-#include "../kernel.h"
 
 window_t windows[MAX_WINDOWS];
 int window_count = 0;
@@ -23,7 +22,7 @@ uint32_t* backbuffer;
 uint32_t* framebuffer;
 #define TASKBAR_HEIGHT 28
 
-char kb_key = 0;
+//char kb_key = 0;
 
 // ---- backbuffer primitives ----
 
@@ -48,7 +47,7 @@ void clear(uint32_t* buf, uint32_t color) {
 }
 // Window rendering API
 int window_draw_pixel(int window, int x, int y, uint32_t color) {
-    if (window < 0 || window >= window_count)
+    if (window <= 0 || window > window_count)
         return -1;
     window_t* w = &windows[window];
     w->framebuffer[y * w->w + x] = color;
@@ -56,7 +55,7 @@ int window_draw_pixel(int window, int x, int y, uint32_t color) {
 }
 
 int window_draw_rect(int window, int x, int y, int w, int h, uint32_t color) {
-	if (window < 0 || window >= window_count)
+	if (window <= 0 || window > window_count)
 		return -1;
 
 	window_t* w2 = &windows[window];
@@ -70,8 +69,8 @@ int window_draw_rect(int window, int x, int y, int w, int h, uint32_t color) {
 }
 
 int window_draw_char(int window, int x, int y, char c, int size, uint32_t fg, uint32_t bg) {
-    if (window < 0 || window >= window_count)
-	   return -1;
+    if (window <- 0 || window > window_count)
+	    return -1;
     window_t* w = &windows[window];
     for (int row = 0; row < 16; row++) {
         uint8_t line = font_bin[(uint8_t)c * 16 + row];
@@ -90,8 +89,8 @@ int window_draw_char(int window, int x, int y, char c, int size, uint32_t fg, ui
 }
 
 int window_printf(int window, int x, int y, int size, uint32_t fg, uint32_t bg, const char* fmt, ...) {
-    if (window < 0 || window >= window_count)
-	   return -1;
+    if (window <= 0 || window > window_count)
+	    return -1;
     va_list args;
     va_start(args, fmt);
     char buffer[32];
@@ -253,8 +252,8 @@ static int last_mouse_y = 0;
 // ---- z-order helper ----
 
 void bring_window_to_front(int id) {
-    if (id < 0 || id >= window_count) return;
     if (windows[id].z == highest_z) return;
+    if (id < 0 || id >= window_count) return;
 
     highest_z++;
     windows[id].z = highest_z;
@@ -263,7 +262,7 @@ void bring_window_to_front(int id) {
 
 // ---- window clear ----
 int clear_window(int window) {
-	if (window < 0 || window >= window_count)
+	if (window <= 0 || window > window_count)
 		return -1;
 
 	window_t* w = &windows[window];
@@ -278,18 +277,10 @@ int clear_window(int window) {
 
 // ---- window creation ----
 
-int create_window(char* name, int width, int height, int titlebar) {
+int create_window(char* name, int width, int height) {
     if (window_count >= MAX_WINDOWS) return -1;
 
     window_t* w = &windows[window_count];
-
-    if (titlebar) {
-	    w->titlebar = true;
-    } else if (!titlebar) {
-	    w->titlebar = false;
-    } else {
-	    return -1;
-    }
 
     w->framebuffer = malloc(width * height * sizeof(uint32_t));
     if (!w->framebuffer) return -1;
@@ -322,13 +313,11 @@ void draw_window(int id) {
     int x0 = w->x;
     int y0 = w->y;
 
-    if (w->titlebar == true) {
-        // ---- titlebar ----
-        bf_draw_rect(x0, y0 - 20, w->w, 20, 0x444444);
+    // ---- titlebar ----
+    bf_draw_rect(x0, y0 - 20, w->w, 20, 0x444444);
 
-        // ---- title text ----
-        bf_printf(x0 + 4, y0 - 16, 1, 0xFFFFFF, 0x444444, w->title);
-    }
+    // ---- title text ----
+    bf_printf(x0 + 4, y0 - 16, 1, 0xFFFFFF, 0x444444, w->title);
 
     // ---- window content ----
     for (int y = 0; y < w->h; y++) {
@@ -478,7 +467,7 @@ void wm_update_drag(int mouse_btn) {
             if (mouse.x >= w->x &&
                 mouse.x < w->x + w->w &&
                 mouse.y >= w->y - 20 &&
-                mouse.y < w->y && w->titlebar) {
+                mouse.y < w->y) {
 
                 drag_window = i;
                 break;
@@ -537,9 +526,11 @@ void test_window() {
 
 // ---- Update key ----
 
+/*
 void update_kb() {
 	kb_key = getchar();
 }
+*/
 
 // ---- render loop ----
 
@@ -552,41 +543,24 @@ void wm_render() {
     clear_screen();
     int sw, sh;
     get_screen_res(&sw, &sh);
-    char dbg[128];
-    heap_stats_t stats = heap_get_stats();
-    sprintf(dbg, "free=%d backbuffer=%x sw=%d sh=%d size=%d\n", stats.free, (uint32_t)backbuffer, sw, sh, sw * sh);
-    serial_write(dbg);
-
     backbuffer = malloc(sw * sh * sizeof(uint32_t));
-    if (!backbuffer) {
-	    return;
-    }
     framebuffer = (uint32_t*)screen.buffer;
     wm_running = 1;
     //test_window();
 
-    stats = heap_get_stats();
-
-    sprintf(dbg, "free=%d backbuffer=%x sw=%d sh=%d size=%d\n", stats.free, (uint32_t)backbuffer, sw, sh, sw * sh);
-    serial_write(dbg);
-
     while (wm_running) {
         if (pit_ticks - last_tick >= TICKS_PER_FRAME) {
-	   __asm__("cli");
+	    __asm__("cli");
             last_tick = pit_ticks;
-	   update_kb();
-	   serial_write("clear\n");
+	    //update_kb();
             clear(backbuffer, wm_background_color);
-	    serial_write("Draw all windows");
             draw_all_windows();
-	    serial_write("Draw taskbar");
-	   draw_taskbar();
-	    serial_write("Update drag");
+	    draw_taskbar();
             wm_update_drag(mouse.left);
             bf_draw_cursor(mouse.x, mouse.y);
             screen_flip();
-	   last_mouse_left = mouse.left;
-	   __asm__("sti");
+	    last_mouse_left = mouse.left;
+	    __asm__("sti");
         }
 
         __asm__ volatile("hlt");

@@ -9,6 +9,7 @@ typedef struct window {
     int z;
     bool focused;
     bool dragging;
+    bool titlebar;
     uint32_t* framebuffer;
     int fb_changed;
     char title[64];

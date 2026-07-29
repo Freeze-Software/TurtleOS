@@ -11,4 +11,5 @@ int add_task(void (*func), char* name, int stack_size);
 int disable_task(int id);
 int enable_task(int id);
 extern volatile uint32_t pit_ticks;
+int get_current_task();
 int get_task_count();

@@ -1,6 +1,6 @@
 #include "gdt.h"
 
-static struct gdt_entry gdt[3];
+static struct gdt_entry gdt[6];
 static struct gdt_ptr   gdtp;
 
 static void gdt_set_gate(int n, uint32_t base, uint32_t limit,
@@ -20,6 +20,8 @@ void gdt_init() {
     gdt_set_gate(0, 0, 0,          0x00, 0x00);
     gdt_set_gate(1, 0, 0xFFFFFFFF, 0x9A, 0xCF);
     gdt_set_gate(2, 0, 0xFFFFFFFF, 0x92, 0xCF);
+    gdt_set_gate(3, 0, 0xFFFFFFFF, 0xFA, 0xCF);
+    gdt_set_gate(4, 0, 0xFFFFFFFF, 0xF2, 0xCF);
 
     __asm__ volatile(
         "lgdt %0\n\t"

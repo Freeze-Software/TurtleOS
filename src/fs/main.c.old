@@ -45,12 +45,29 @@ void tfs_format() {
 
     ata_write_sector(0, superblock_sector);
 
-    // no separate metadata reservation needed: the disk is already
-    // zeroed above, so every bitmap sector is already all-free, and
-    // the bitmap only ever addresses blocks from data_start onward --
-    // superblock/bitmap/entries sectors live before data_start and are
-    // never reachable through alloc_bitmap() in the first place.
+    // ---- reserve metadata ----
+    uint8_t bitmap_sector[512];
 
+    for (int i = new_superblock.bitmap_start;
+         i <= new_superblock.bitmap_end;
+         i++) {
+
+        memset(bitmap_sector, 0, 512);
+        ata_read_sector(i, bitmap_sector);
+
+        for (int j = 0; j < 512; j++) {
+
+            int block =
+                ((i - new_superblock.bitmap_start) * 512)
+                + j;
+
+            if (block <= new_superblock.entries_end) {
+                bitmap_sector[j] = 1;
+            }
+        }
+
+        ata_write_sector(i, bitmap_sector);
+    }
     tfs_mount();
     make_dir("/", -1);
 }
@@ -68,7 +85,6 @@ int tfs_mount() {
 	}
 }
 
-// returns an absolute LBA into the data region, or -1 if full / not mounted
 int alloc_bitmap() {
     uint8_t sector[512];
 
@@ -86,11 +102,11 @@ int alloc_bitmap() {
                 sector[j] = 1;
                 ata_write_sector(i, sector);
 
-                int rel_block =
+                int block =
                     ((i - mounted_superblock.bitmap_start)
                     * 512) + j;
 
-                return mounted_superblock.data_start + rel_block;
+                return block;
             }
         }
     }
@@ -103,12 +119,17 @@ int get_entry_by_id(int id, fs_entry_t* out,
                     int* out_index) {
 
     uint8_t sector_buf[512];
+    char log_out[128];
 
     for (int sector = mounted_superblock.entries_start;
          sector <= mounted_superblock.entries_end;
          sector++) {
 
-        ata_read_sector(sector, sector_buf);
+        int read_success = ata_read_sector(sector, sector_buf);
+	if (!read_success) {
+		sprintf(log_out, "Failed reading sector entry %d", sector);
+		log(log_out, "FS");
+	}
 
         fs_entry_t* entries =
             (fs_entry_t*)sector_buf;
@@ -136,6 +157,9 @@ int get_entry_by_id(int id, fs_entry_t* out,
         }
     }
 
+    sprintf(log_out, "Entry %d not found", id);
+    log(log_out, "FS");
+    console_writefln("Entry %d not found", id);
     return -1;
 }
 
@@ -214,8 +238,10 @@ int make_file(char* name, int parent, int size) {
                     sector,
                     sector_buf
                 );
-
-                return 0;
+		char out[128];
+		sprintf(out, "File created: %d", file.id);
+		log(out, "FS");
+                return file.id;
             }
         }
     }
@@ -233,6 +259,8 @@ int make_dir(char* name, int parent_id) {
     dir.name[63] = '\0';
     uint8_t sector_buf[512];
 
+    int is_root = (parent_id == -1);
+
     // search for free entry
     for (int sector =
          mounted_superblock.entries_start;
@@ -248,10 +276,11 @@ int make_dir(char* name, int parent_id) {
             // empty entry
             if (entries[i].name[0] == '\0') {
                 // set id
-                dir.id =
-                    ((sector -
-                    mounted_superblock.entries_start)
-                    * 2) + i;
+		if (is_root) {
+		    dir.id = 0;
+		} else {
+		    dir.id = ((sector - mounted_superblock.entries_start) * 2) + i;
+		}
 
                 memcpy(
                     &entries[i],
@@ -263,7 +292,9 @@ int make_dir(char* name, int parent_id) {
                     sector,
                     sector_buf
                 );
-
+		char out[128];
+		sprintf(out, "Directory created: %d", dir.id);
+		log(out, "FS");
                 return dir.id;
             }
         }
@@ -286,12 +317,18 @@ int file_get_size(int id) {
 
 int file_read(int id, void* buffer) {
     fs_entry_t file;
+    char log_out[128];
 
-    if (get_entry_by_id(id, &file, NULL, NULL) < 0)
-        return -1;
+    int get_entry = get_entry_by_id(id, &file, NULL, NULL);
+    if (get_entry < 0)
+	sprintf(log_out, "Get Entry Fail(%d) in file %d", get_entry, id);
+        log(log_out, "FS");
+        return -1; //Get Entry Failed
 
     if (file.type != 1)
-        return -1;
+	sprintf(log_out, "Mismatching File Type(%d) in file %d", file.type, id);
+        log(log_out, "FS");
+        return -2; //Mismatch of type
 
     uint8_t* dst = (uint8_t*)buffer;
 
@@ -338,15 +375,12 @@ int file_delete(int id) {
              block <= file.extents[e].end;
              block++) {
 
-            int rel_block =
-                block - mounted_superblock.data_start;
-
             int bitmap_sector =
                 mounted_superblock.bitmap_start +
-                (rel_block / 512);
+                (block / 512);
 
             int bitmap_index =
-                rel_block % 512;
+                block % 512;
 
             ata_read_sector(
                 bitmap_sector,
@@ -616,10 +650,9 @@ int file_resize(int id, int new_size) {
         for (int e = file.extent_count - 1; e >= 0 && to_free > 0; e--) {
             while (file.extents[e].end >= file.extents[e].start && to_free > 0) {
                 int block = file.extents[e].end;
-                int rel_block = block - mounted_superblock.data_start;
 
-                int bitmap_sector = mounted_superblock.bitmap_start + (rel_block / 512);
-                int bitmap_index  = rel_block % 512;
+                int bitmap_sector = mounted_superblock.bitmap_start + (block / 512);
+                int bitmap_index  = block % 512;
 
                 ata_read_sector(bitmap_sector, bitmap);
                 bitmap[bitmap_index] = 0;
