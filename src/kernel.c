@@ -16,6 +16,6 @@ void kernel_main(uint32_t magic, uint32_t mb_addr) {
     ps2mouse_init();
     pit_init(100);
     console_init(magic, mb_addr);
-    add_task(shell, "Shell", 4096);
+    add_task(shell, "Shell", 32768);
     sti();
 }

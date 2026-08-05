@@ -36,12 +36,14 @@ void mouse_irq_handler() {
 
     int dx = (int8_t)mouse_packet[1];
     int dy = (int8_t)mouse_packet[2];
+    mouse.last_x = mouse.x;
+    mouse.last_y = mouse.y;
     mouse.x += dx;
     mouse.y -= dy;
     mouse.left   = mouse_packet[0] & 1;
     mouse.right  = mouse_packet[0] & 2;
     mouse.middle = mouse_packet[0] & 4;
-    update_cursor(mouse.x + dx, mouse.y - dy);
+    //update_cursor(mouse.x + dx, mouse.y - dy);
 }
 
 static void ps2mouse_write(uint8_t data) {

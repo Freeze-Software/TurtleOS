@@ -18,6 +18,7 @@ const int TASK_SIZE = sizeof(task_t);
 
 int current_task = -1;
 int tasks_count = 0;
+volatile uint32_t pit_ticks = 0;
 
 task_t tasks[MAX_TASKS];
 
@@ -81,6 +82,10 @@ int enable_task(int id) {
 	} else {
 		return -1;
 	}
+}
+
+int get_current_task() {
+	return current_task;
 }
 
 int get_task_count() {

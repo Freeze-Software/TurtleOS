@@ -1,0 +1,708 @@
+#include "main.h"
+#include "../kernel.h"
+#include "../libc/main.h"
+#include <stdint.h>
+
+super_blockt_t mounted_superblock;
+int disk_mounted = 0;
+
+void tfs_format() {
+    int total_blocks = ata_get_sector_count();
+
+    for (int i = 0; i < total_blocks; i++) {
+        ata_zero_sector(i);
+    }
+
+    super_blockt_t new_superblock;
+
+    new_superblock.total_blocks = total_blocks;
+    strncpy(new_superblock.magic, "TurtleFS", 8);
+
+    new_superblock.bitmap_start = 1;
+
+    // 1 Byte = 1 Block
+    new_superblock.bitmap_end =
+        new_superblock.bitmap_start +
+        ((total_blocks + 511) / 512) - 1;
+
+    new_superblock.entries_start =
+        new_superblock.bitmap_end + 1;
+
+    new_superblock.entries_end =
+        new_superblock.entries_start +
+        (total_blocks / 80);
+
+    new_superblock.data_start =
+        new_superblock.entries_end + 1;
+
+    new_superblock.version = 1;
+
+    // write superblock
+    uint8_t superblock_sector[512] = {0};
+    memcpy(superblock_sector,
+           &new_superblock,
+           sizeof(super_blockt_t));
+
+    ata_write_sector(0, superblock_sector);
+
+    // ---- reserve metadata ----
+    uint8_t bitmap_sector[512];
+
+    for (int i = new_superblock.bitmap_start;
+         i <= new_superblock.bitmap_end;
+         i++) {
+
+        memset(bitmap_sector, 0, 512);
+        ata_read_sector(i, bitmap_sector);
+
+        for (int j = 0; j < 512; j++) {
+
+            int block =
+                ((i - new_superblock.bitmap_start) * 512)
+                + j;
+
+            if (block <= new_superblock.entries_end) {
+                bitmap_sector[j] = 1;
+            }
+        }
+
+        ata_write_sector(i, bitmap_sector);
+    }
+    tfs_mount();
+    make_dir("/", -1);
+}
+
+int tfs_mount() {
+	uint8_t sector[512];
+	ata_read_sector(0, sector);
+	memcpy(&mounted_superblock, sector, sizeof(super_blockt_t));
+	int is_turtle = strncmp(mounted_superblock.magic, "TurtleFS", 8);
+	if (is_turtle == 0) { // This is Turtle
+		disk_mounted = 1;
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
+int alloc_bitmap() {
+    uint8_t sector[512];
+
+    if (!disk_mounted)
+        return -1;
+
+    for (int i = mounted_superblock.bitmap_start;
+         i <= mounted_superblock.bitmap_end;
+         i++) {
+
+        ata_read_sector(i, sector);
+
+        for (int j = 0; j < 512; j++) {
+            if (sector[j] == 0) {
+                sector[j] = 1;
+                ata_write_sector(i, sector);
+
+                int block =
+                    ((i - mounted_superblock.bitmap_start)
+                    * 512) + j;
+
+                return block;
+            }
+        }
+    }
+
+    return -1;
+}
+
+int get_entry_by_id(int id, fs_entry_t* out,
+                    int* out_sector,
+                    int* out_index) {
+
+    uint8_t sector_buf[512];
+    char log_out[128];
+
+    for (int sector = mounted_superblock.entries_start;
+         sector <= mounted_superblock.entries_end;
+         sector++) {
+
+        int read_success = ata_read_sector(sector, sector_buf);
+	if (!read_success) {
+		sprintf(log_out, "Failed reading sector entry %d", sector);
+		log(log_out, "FS");
+	}
+
+        fs_entry_t* entries =
+            (fs_entry_t*)sector_buf;
+
+        for (int i = 0; i < 2; i++) {
+
+            if (entries[i].name[0] == '\0')
+                continue;
+
+            if (entries[i].id == id) {
+
+                if (out)
+                    memcpy(out,
+                           &entries[i],
+                           sizeof(fs_entry_t));
+
+                if (out_sector)
+                    *out_sector = sector;
+
+                if (out_index)
+                    *out_index = i;
+
+                return 0;
+            }
+        }
+    }
+
+    sprintf(log_out, "Entry %d not found", id);
+    log(log_out, "FS");
+    console_writefln("Entry %d not found", id);
+    return -1;
+}
+
+int make_file(char* name, int parent, int size) {
+    if (strnlen(name, 64) == 64)
+        return -4;
+    fs_entry_t file;
+    memset(&file, 0, sizeof(fs_entry_t));
+    int sectors = (size + 511) / 512;
+    int last_sector = -1;
+    file.type = 1;
+    file.extent_count = 1;
+    file.parent = parent;
+    file.size = size;
+    strncpy(file.name, name, 63);
+    file.name[63] = '\0';
+
+    for (int i = 0; i < sectors; i++) {
+        int sector = alloc_bitmap();
+
+        if (sector < 0) {
+            return -1;
+        }
+
+        if (last_sector == -1) {
+            file.extents[0].start = sector;
+            file.extents[0].end = sector;
+        } else if (sector == last_sector + 1) {
+            file.extents[
+                file.extent_count - 1
+            ].end = sector;
+        } else {
+
+            if (file.extent_count >= MAX_EXTENTS) {
+                return -2;
+            }
+
+            file.extent_count++;
+
+            file.extents[
+                file.extent_count - 1
+            ].start = sector;
+
+            file.extents[
+                file.extent_count - 1
+            ].end = sector;
+        }
+
+        last_sector = sector;
+    }
+
+    // ---- search free entry block ----
+
+    uint8_t sector_buf[512];
+
+    for (int sector =
+         mounted_superblock.entries_start;
+         sector <= mounted_superblock.entries_end;
+         sector++) {
+        ata_read_sector(sector, sector_buf);
+        fs_entry_t* entries =
+            (fs_entry_t*)sector_buf;
+
+        // 2 entries per sector
+        for (int i = 0; i < 2; i++) {
+            // empty = name[0] == 0
+            if (entries[i].name[0] == '\0') {
+                file.id = ((sector - mounted_superblock.entries_start) * 2) + i;
+                memcpy(
+                    &entries[i],
+                    &file,
+                    sizeof(fs_entry_t)
+                );
+
+                ata_write_sector(
+                    sector,
+                    sector_buf
+                );
+		char out[128];
+		sprintf(out, "File created: %d", file.id);
+		log(out, "FS");
+                return file.id;
+            }
+        }
+    }
+
+    return -3; // entry table full
+}
+
+int make_dir(char* name, int parent_id) {
+    fs_entry_t dir;
+    memset(&dir, 0, sizeof(fs_entry_t));
+    dir.type = 2; // folder
+    dir.extent_count = 0;
+    dir.parent = parent_id;
+    strncpy(dir.name, name, 63);
+    dir.name[63] = '\0';
+    uint8_t sector_buf[512];
+
+    int is_root = (parent_id == -1);
+
+    // search for free entry
+    for (int sector =
+         mounted_superblock.entries_start;
+         sector <= mounted_superblock.entries_end;
+         sector++) {
+
+        ata_read_sector(sector, sector_buf);
+        fs_entry_t* entries =
+            (fs_entry_t*)sector_buf;
+
+        // 2 entries per sector
+        for (int i = 0; i < 2; i++) {
+            // empty entry
+            if (entries[i].name[0] == '\0') {
+                // set id
+		if (is_root) {
+		    dir.id = 0;
+		} else {
+		    dir.id = ((sector - mounted_superblock.entries_start) * 2) + i;
+		}
+
+                memcpy(
+                    &entries[i],
+                    &dir,
+                    sizeof(fs_entry_t)
+                );
+
+                ata_write_sector(
+                    sector,
+                    sector_buf
+                );
+		char out[128];
+		sprintf(out, "Directory created: %d", dir.id);
+		log(out, "FS");
+                return dir.id;
+            }
+        }
+    }
+
+    return -1;
+}
+
+int file_get_size(int id) {
+    fs_entry_t file;
+
+    if (get_entry_by_id(id, &file, NULL, NULL) < 0)
+        return -1;
+
+    if (file.type != 1)
+        return -1;
+
+    return file.size;
+}
+
+int file_read(int id, void* buffer) {
+    fs_entry_t file;
+    char log_out[128];
+
+    int get_entry = get_entry_by_id(id, &file, NULL, NULL);
+    if (get_entry < 0)
+	sprintf(log_out, "Get Entry Fail(%d) in file %d", get_entry, id);
+        log(log_out, "FS");
+        return -1; //Get Entry Failed
+
+    if (file.type != 1)
+	sprintf(log_out, "Mismatching File Type(%d) in file %d", file.type, id);
+        log(log_out, "FS");
+        return -2; //Mismatch of type
+
+    uint8_t* dst = (uint8_t*)buffer;
+
+    for (int e = 0; e < file.extent_count; e++) {
+
+        for (int sector =
+             file.extents[e].start;
+             sector <= file.extents[e].end;
+             sector++) {
+
+            ata_read_sector(
+                sector,
+                dst
+            );
+
+            dst += 512;
+        }
+    }
+
+    return 0;
+}
+
+int file_delete(int id) {
+    fs_entry_t file;
+    int entry_sector;
+    int entry_index;
+
+    if (get_entry_by_id(
+            id,
+            &file,
+            &entry_sector,
+            &entry_index) < 0)
+        return -1;
+
+    if (file.type != 1)
+        return -1;
+
+    uint8_t bitmap[512];
+
+    for (int e = 0; e < file.extent_count; e++) {
+
+        for (int block =
+             file.extents[e].start;
+             block <= file.extents[e].end;
+             block++) {
+
+            int bitmap_sector =
+                mounted_superblock.bitmap_start +
+                (block / 512);
+
+            int bitmap_index =
+                block % 512;
+
+            ata_read_sector(
+                bitmap_sector,
+                bitmap
+            );
+
+            bitmap[bitmap_index] = 0;
+
+            ata_write_sector(
+                bitmap_sector,
+                bitmap
+            );
+        }
+    }
+
+    uint8_t sector_buf[512];
+
+    ata_read_sector(
+        entry_sector,
+        sector_buf
+    );
+
+    fs_entry_t* entries =
+        (fs_entry_t*)sector_buf;
+
+    memset(
+        &entries[entry_index],
+        0,
+        sizeof(fs_entry_t)
+    );
+
+    ata_write_sector(
+        entry_sector,
+        sector_buf
+    );
+
+    return 0;
+}
+
+//You may ask why i don't use this function else? i'm too lazy just quickly slapped it together
+
+int remove_entry(int id) {
+    uint8_t sector_buf[512];
+
+    for (int sector = mounted_superblock.entries_start;
+         sector <= mounted_superblock.entries_end;
+         sector++) {
+
+        ata_read_sector(sector, sector_buf);
+        fs_entry_t* entries = (fs_entry_t*)sector_buf;
+
+        for (int i = 0; i < 2; i++) {
+
+            if (entries[i].name[0] == '\0')
+                continue;
+
+            if (entries[i].id != id)
+                continue;
+
+            memset(&entries[i], 0, sizeof(fs_entry_t));
+            ata_write_sector(sector, sector_buf);
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
+int dir_delete(int id) {
+    if (id == 0) return -1;
+    uint8_t sector_buf[512];
+    for (int sector = mounted_superblock.entries_start;
+         sector <= mounted_superblock.entries_end;
+         sector++) {
+        ata_read_sector(sector, sector_buf);
+        fs_entry_t* entries = (fs_entry_t*)sector_buf;
+        for (int i = 0; i < 2; i++) {
+            if (entries[i].name[0] == '\0') continue;
+            if (entries[i].parent != id) continue;
+            int child_id = entries[i].id;
+            int child_type = entries[i].type;
+            if (child_type == 1)
+                file_delete(child_id);
+            else if (child_type == 2)
+                dir_delete(child_id);
+            ata_read_sector(sector, sector_buf);
+        }
+    }
+    return remove_entry(id);
+}
+
+int file_write(int id, const void* buffer, int size) {
+    fs_entry_t file;
+    int entry_sector;
+    int entry_index;
+
+    if (file.size < size) {
+	    int success = file_resize(id, size);
+	    if (success != 0) {
+		    return -1;
+	    }
+    }
+
+    if (get_entry_by_id(
+            id,
+            &file,
+            &entry_sector,
+            &entry_index) < 0)
+        return -1;
+
+    if (file.type != 1)
+        return -1;
+
+    const uint8_t* src = buffer;
+    int remaining = size;
+
+    uint8_t sector_buf[512];
+
+    for (int e = 0;
+         e < file.extent_count && remaining > 0;
+         e++) {
+
+        for (int sector =
+             file.extents[e].start;
+             sector <= file.extents[e].end &&
+             remaining > 0;
+             sector++) {
+
+            memset(sector_buf, 0, 512);
+
+            int bytes =
+                remaining > 512
+                ? 512
+                : remaining;
+
+            memcpy(
+                sector_buf,
+                src,
+                bytes
+            );
+
+            ata_write_sector(
+                sector,
+                sector_buf
+            );
+
+            src += bytes;
+            remaining -= bytes;
+        }
+    }
+
+    file.size = size;
+
+    ata_read_sector(
+        entry_sector,
+        sector_buf
+    );
+
+    fs_entry_t* entries =
+        (fs_entry_t*)sector_buf;
+
+    memcpy(
+        &entries[entry_index],
+        &file,
+        sizeof(fs_entry_t)
+    );
+
+    ata_write_sector(
+        entry_sector,
+        sector_buf
+    );
+
+    return 0;
+}
+
+int find_entry(char* name, int parent) {
+    uint8_t sector_buf[512];
+
+    for (int sector =
+         mounted_superblock.entries_start;
+         sector <= mounted_superblock.entries_end;
+         sector++) {
+
+        ata_read_sector(sector, sector_buf);
+
+        fs_entry_t* entries =
+            (fs_entry_t*)sector_buf;
+
+        for (int i = 0; i < 2; i++) {
+
+            if (entries[i].name[0] == '\0')
+                continue;
+
+            if (entries[i].parent != parent)
+                continue;
+
+            if (strncmp(entries[i].name, name, strlen(name)) == 0)
+                return entries[i].id;
+        }
+    }
+
+    return -1;
+}
+
+int list_dir(int parent,
+             fs_entry_t* out,
+             int max_entries) {
+
+    uint8_t sector_buf[512];
+    int count = 0;
+
+    for (int sector =
+         mounted_superblock.entries_start;
+         sector <= mounted_superblock.entries_end;
+         sector++) {
+
+        ata_read_sector(sector, sector_buf);
+
+        fs_entry_t* entries =
+            (fs_entry_t*)sector_buf;
+
+        for (int i = 0; i < 2; i++) {
+
+            if (entries[i].name[0] == '\0')
+                continue;
+
+            if (entries[i].parent != parent)
+                continue;
+
+            if (count >= max_entries)
+                return count;
+
+            memcpy(
+                &out[count],
+                &entries[i],
+                sizeof(fs_entry_t)
+            );
+
+            count++;
+        }
+    }
+
+    return count;
+}
+
+int file_resize(int id, int new_size) {
+    fs_entry_t file;
+    int entry_sector;
+    int entry_index;
+
+    if (get_entry_by_id(id, &file, &entry_sector, &entry_index) < 0)
+        return -1;
+
+    if (file.type != 1)
+        return -1;
+
+    int old_sectors = 0;
+    for (int e = 0; e < file.extent_count; e++)
+        old_sectors += file.extents[e].end - file.extents[e].start + 1;
+
+    int new_sectors = (new_size + 511) / 512;
+
+    if (new_sectors < old_sectors) {
+        int to_free = old_sectors - new_sectors;
+        uint8_t bitmap[512];
+
+        for (int e = file.extent_count - 1; e >= 0 && to_free > 0; e--) {
+            while (file.extents[e].end >= file.extents[e].start && to_free > 0) {
+                int block = file.extents[e].end;
+
+                int bitmap_sector = mounted_superblock.bitmap_start + (block / 512);
+                int bitmap_index  = block % 512;
+
+                ata_read_sector(bitmap_sector, bitmap);
+                bitmap[bitmap_index] = 0;
+                ata_write_sector(bitmap_sector, bitmap);
+
+                file.extents[e].end--;
+                to_free--;
+            }
+
+            if (file.extents[e].end < file.extents[e].start) {
+                file.extent_count--;
+            }
+        }
+
+    } else if (new_sectors > old_sectors) {
+        int to_alloc = new_sectors - old_sectors;
+
+        for (int i = 0; i < to_alloc; i++) {
+            int block = alloc_bitmap();
+            if (block < 0)
+                return -2;
+
+            int last_extent = file.extent_count - 1;
+
+            if (block == file.extents[last_extent].end + 1) {
+                file.extents[last_extent].end++;
+            } else {
+                if (file.extent_count >= MAX_EXTENTS)
+                    return -3;
+                file.extent_count++;
+                file.extents[file.extent_count - 1].start = block;
+                file.extents[file.extent_count - 1].end   = block;
+            }
+        }
+    }
+
+    file.size = new_size;
+
+    uint8_t sector_buf[512];
+    ata_read_sector(entry_sector, sector_buf);
+    fs_entry_t* entries = (fs_entry_t*)sector_buf;
+    memcpy(&entries[entry_index], &file, sizeof(fs_entry_t));
+    ata_write_sector(entry_sector, sector_buf);
+
+    return 0;
+}
+
+int total_sectors_mounted() {
+	if (disk_mounted) {
+		return mounted_superblock.total_blocks;
+	}
+	return -1;
+}

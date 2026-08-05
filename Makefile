@@ -43,14 +43,14 @@ disk:
 
 run: iso disk
 	@if [ -n "$$DISPLAY" ] || [ -n "$$WAYLAND_DISPLAY" ]; then \
-		qemu-system-i386 -cdrom $(ISO) -drive file=$(DATA_DISK),format=raw,if=ide,index=0,media=disk; \
+		qemu-system-i386 -cdrom $(ISO) -drive file=$(DATA_DISK),format=raw,if=ide,index=0,media=disk -m 512M; \
 	else \
 		echo "No GUI display detected, falling back to nographic mode."; \
-		qemu-system-i386 -cdrom $(ISO) -drive file=$(DATA_DISK),format=raw,if=ide,index=0,media=disk -nographic -serial mon:stdio; \
+		qemu-system-i386 -cdrom $(ISO) -drive file=$(DATA_DISK),format=raw,if=ide,index=0,media=disk -nographic -serial mon:stdio -m 512M; \
 	fi
 
 run-nographic: iso disk
-	qemu-system-i386 -cdrom $(ISO) -drive file=$(DATA_DISK),format=raw,if=ide,index=0,media=disk -nographic -serial mon:stdio
+	qemu-system-i386 -cdrom $(ISO) -drive file=$(DATA_DISK),format=raw,if=ide,index=0,media=disk -nographic -serial mon:stdio -m 512M
 
 clean:
 	rm -rf build
